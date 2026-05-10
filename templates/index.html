@@ -35,6 +35,8 @@
     <h1>Finance Tracker</h1>
 
     <div class="nav">
+        <a href="{{ url_for('list_accounts') }}">Accounts</a>
+        <a href="{{ url_for('list_transactions') }}">Transactions</a>
         <a href="{{ url_for('new_account') }}">+ New Account</a>
         <a href="{{ url_for('new_transaction') }}">+ New Transaction</a>
     </div>

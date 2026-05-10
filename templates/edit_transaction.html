@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Edit Transaction - Finance Tracker</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 500px; margin: 2rem auto; padding: 0 1rem; }
+        label { display: block; margin-top: 1rem; font-weight: 600; }
+        input, select { width: 100%; padding: 0.5rem; font-size: 1rem; box-sizing: border-box; }
+        .error { color: #c00; font-size: 0.9rem; margin-top: 0.25rem; }
+        button { margin-top: 1.5rem; padding: 0.5rem 1.5rem; font-size: 1rem; cursor: pointer; }
+        a { color: #06c; }
+    </style>
+</head>
+<body>
+    <p><a href="{{ url_for('list_transactions') }}">&larr; Back to transactions</a></p>
+    <h1>Edit Transaction</h1>
+
+    <form method="POST" novalidate>
+        {{ form.hidden_tag() }}
+
+        <label>{{ form.transaction_date.label }}</label>
+        {{ form.transaction_date() }}
+        {% for error in form.transaction_date.errors %}<p class="error">{{ error }}</p>{% endfor %}
+
+        <label>{{ form.amount.label }}</label>
+        {{ form.amount(step="0.01") }}
+        {% for error in form.amount.errors %}<p class="error">{{ error }}</p>{% endfor %}
+
+        <label>{{ form.description.label }}</label>
+        {{ form.description() }}
+        {% for error in form.description.errors %}<p class="error">{{ error }}</p>{% endfor %}
+
+        <label>{{ form.account_id.label }}</label>
+        {{ form.account_id() }}
+        {% for error in form.account_id.errors %}<p class="error">{{ error }}</p>{% endfor %}
+
+        <label>{{ form.category_id.label }}</label>
+        {{ form.category_id() }}
+        {% for error in form.category_id.errors %}<p class="error">{{ error }}</p>{% endfor %}
+
+        <button type="submit">Update Transaction</button>
+    </form>
+</body>
+</html>

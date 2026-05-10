@@ -161,6 +161,16 @@ class TransactionForm(FlaskForm):
         default=date.today,
     )
 
+def balance_delta(amount, category_type):
+    """Compute how much an account balance should change for a given transaction.
+
+    Income adds; expense subtracts. Amount is always stored as positive;
+    the sign comes from the category type. This function exists so the
+    same calculation isn't duplicated across new/edit/delete routes.
+    """
+    if category_type == 'income':
+        return Decimal(amount)
+    return -Decimal(amount)
 
 @app.route('/')
 def hello():
@@ -322,6 +332,138 @@ def new_transaction():
             flash(f'Could not save transaction: {e.__class__.__name__}. No changes were made.', 'error')
 
     return render_template('new_transaction.html', form=form)
+
+@app.route('/accounts')
+def list_accounts():
+    accounts = Account.query.order_by(Account.name).all()
+    return render_template('accounts_list.html', accounts=accounts)
+
+@app.route('/accounts/<int:account_id>/edit', methods=['GET', 'POST'])
+def edit_account(account_id):
+    account = Account.query.get_or_404(account_id)
+    form = AccountForm(obj=account)
+
+    if form.validate_on_submit():
+        account.name = form.name.data.strip()
+        account.account_type = form.account_type.data
+        # NOTE: We intentionally do NOT let the user edit `balance` here.
+        # Balance is derived from the transaction history and must only
+        # change through the atomic transaction logic. Letting users
+        # edit it directly would break data integrity.
+        try:
+            db.session.commit()
+            flash(f'Account "{account.name}" updated.', 'success')
+            return redirect(url_for('list_accounts'))
+        except IntegrityError:
+            db.session.rollback()
+            flash('An account with that name already exists.', 'error')
+
+    return render_template('edit_account.html', form=form, account=account)
+
+@app.route('/accounts/<int:account_id>/delete', methods=['POST'])
+def delete_account(account_id):
+    account = Account.query.get_or_404(account_id)
+
+    # Block deletion if the account has transactions.
+    # Deleting cascade-deletes is dangerous and rarely what users want.
+    if account.transactions:
+        flash(
+            f'Cannot delete "{account.name}" - it has {len(account.transactions)} '
+            f'transaction(s). Delete the transactions first.',
+            'error'
+        )
+        return redirect(url_for('list_accounts'))
+
+    db.session.delete(account)
+    db.session.commit()
+    flash(f'Account "{account.name}" deleted.', 'success')
+    return redirect(url_for('list_accounts'))
+
+@app.route('/transactions')
+def list_transactions():
+    transactions = Transaction.query.order_by(
+        Transaction.transaction_date.desc(),
+        Transaction.transaction_id.desc(),
+    ).all()
+    return render_template('transactions_list.html', transactions=transactions)
+
+@app.route('/transactions/<int:transaction_id>/edit', methods=['GET', 'POST'])
+def edit_transaction(transaction_id):
+    txn = Transaction.query.get_or_404(transaction_id)
+    form = TransactionForm(obj=txn)
+
+    # Populate dropdowns
+    form.account_id.choices = [
+        (a.account_id, f'{a.name} ({a.account_type})')
+        for a in Account.query.order_by(Account.name).all()
+    ]
+    form.category_id.choices = [
+        (c.category_id, f'{c.name} ({c.category_type})')
+        for c in Category.query.order_by(Category.category_type, Category.name).all()
+    ]
+
+    if form.validate_on_submit():
+        # ============================================================
+        # SQL TRANSACTION: Edit is a 3-step atomic operation.
+        # 1. Reverse the OLD balance impact on the OLD account
+        # 2. Apply the NEW balance impact to the NEW account
+        # 3. Update the transaction row
+        # All three steps must commit together, or none of them do.
+        # ============================================================
+        try:
+            old_account = txn.account
+            old_category = txn.category
+            old_delta = balance_delta(txn.amount, old_category.category_type)
+
+            # 1. Reverse the old impact
+            old_account.balance = Decimal(old_account.balance) - old_delta
+
+            # 2. Apply the new impact
+            new_account = Account.query.get(form.account_id.data)
+            new_category = Category.query.get(form.category_id.data)
+            new_delta = balance_delta(form.amount.data, new_category.category_type)
+            new_account.balance = Decimal(new_account.balance) + new_delta
+
+            # 3. Update the transaction row itself
+            txn.account_id = new_account.account_id
+            txn.category_id = new_category.category_id
+            txn.amount = form.amount.data
+            txn.description = form.description.data.strip()
+            txn.transaction_date = form.transaction_date.data
+
+            db.session.commit()
+            flash('Transaction updated.', 'success')
+            return redirect(url_for('list_transactions'))
+
+        except Exception as e:
+            db.session.rollback()
+            import traceback
+            traceback.print_exc()   # prints the FULL stack trace to your terminal
+            flash(f'Could not update transaction: {e.__class__.__name__}: {e}. No changes were made.', 'error')
+
+    return render_template('edit_transaction.html', form=form, txn=txn)
+
+@app.route('/transactions/<int:transaction_id>/delete', methods=['POST'])
+def delete_transaction(transaction_id):
+    txn = Transaction.query.get_or_404(transaction_id)
+
+    # ============================================================
+    # SQL TRANSACTION: Deleting must reverse the balance impact atomically.
+    # If the rollback succeeds but the delete fails, we've doubled
+    # the user's money. If the delete succeeds but the rollback fails,
+    # we've lost money. Both must commit together.
+    # ============================================================
+    try:
+        delta = balance_delta(txn.amount, txn.category.category_type)
+        txn.account.balance = Decimal(txn.account.balance) - delta
+        db.session.delete(txn)
+        db.session.commit()
+        flash('Transaction deleted and balance restored.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Could not delete: {e.__class__.__name__}.', 'error')
+
+    return redirect(url_for('list_transactions'))
 
 if __name__ == '__main__':
     with app.app_context():
