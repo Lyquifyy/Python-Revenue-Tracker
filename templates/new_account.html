@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>New Account - Finance Tracker</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 500px; margin: 2rem auto; padding: 0 1rem; }
+        label { display: block; margin-top: 1rem; font-weight: 600; }
+        input, select { width: 100%; padding: 0.5rem; font-size: 1rem; box-sizing: border-box; }
+        .error { color: #c00; font-size: 0.9rem; margin-top: 0.25rem; }
+        button { margin-top: 1.5rem; padding: 0.5rem 1.5rem; font-size: 1rem; cursor: pointer; }
+        a { color: #06c; }
+    </style>
+</head>
+<body>
+    <p><a href="{{ url_for('hello') }}">&larr; Back to dashboard</a></p>
+    <h1>New Account</h1>
+
+    <form method="POST" novalidate>
+        {{ form.hidden_tag() }}
+
+        <label>{{ form.name.label }}</label>
+        {{ form.name() }}
+        {% for error in form.name.errors %}
+            <p class="error">{{ error }}</p>
+        {% endfor %}
+
+        <label>{{ form.account_type.label }}</label>
+        {{ form.account_type() }}
+        {% for error in form.account_type.errors %}
+            <p class="error">{{ error }}</p>
+        {% endfor %}
+
+        <label>{{ form.balance.label }}</label>
+        {{ form.balance(step="0.01") }}
+        {% for error in form.balance.errors %}
+            <p class="error">{{ error }}</p>
+        {% endfor %}
+
+        <button type="submit">Create Account</button>
+    </form>
+</body>
+</html>

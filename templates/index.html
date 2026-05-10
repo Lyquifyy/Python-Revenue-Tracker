@@ -14,11 +14,23 @@
 </head>
 <body>
     <h1>Finance Tracker</h1>
-
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div style="padding: 0.75rem; margin: 1rem 0; border-radius: 4px;
+                            background: {% if category == 'success' %}#d4edda{% else %}#f8d7da{% endif %};
+                            color: {% if category == 'success' %}#155724{% else %}#721c24{% endif %};">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+    <p><a href="{{ url_for('new_account') }}">+ New Account</a></p>
     <p>
         <strong>{{ accounts|length }}</strong> account(s),
         <strong>{{ categories|length }}</strong> categor(ies),
-        <strong>{{ transactions|length }}</strong> transaction(s)
+        <strong>{{ transactions|length }}</strong> transaction(s),
+        <strong>{{ budgets|length }}</strong> budget(s)
     </p>
 
     <h2>Transactions</h2>
