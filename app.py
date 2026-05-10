@@ -7,6 +7,7 @@ from wtforms import StringField, DecimalField, SelectField, DateField
 from wtforms.validators import DataRequired, NumberRange, Length
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func, case
+import random
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'totally-secret-key'
@@ -172,6 +173,155 @@ def balance_delta(amount, category_type):
         return Decimal(amount)
     return -Decimal(amount)
 
+def get_financial_quip():
+    """Generate a context-aware, mildly unhinged commentary on the user's finances.
+
+    Pulls stats from the database, picks an applicable template from a
+    weighted list, and returns the formatted message. Falls back to
+    generic quips if no context-specific template fits.
+    """
+    today = date.today()
+    month_start = today.replace(day=1)
+
+    # --- Pull stats we might reference ---
+
+    # Top spending category this month
+    top_cat = db.session.query(
+        Category.name,
+        func.sum(Transaction.amount).label('total'),
+    ).join(Transaction, Transaction.category_id == Category.category_id) \
+     .filter(Category.category_type == 'expense') \
+     .filter(Transaction.transaction_date >= month_start) \
+     .group_by(Category.category_id, Category.name) \
+     .order_by(func.sum(Transaction.amount).desc()) \
+     .first()
+
+    # Net monthly (income minus expense)
+    monthly = db.session.query(
+        func.coalesce(func.sum(case((Category.category_type == 'income', Transaction.amount), else_=0)), 0).label('income'),
+        func.coalesce(func.sum(case((Category.category_type == 'expense', Transaction.amount), else_=0)), 0).label('expense'),
+    ).join(Category, Transaction.category_id == Category.category_id) \
+     .filter(Transaction.transaction_date >= month_start) \
+     .first()
+
+    income = Decimal(monthly.income or 0)
+    expense = Decimal(monthly.expense or 0)
+    net = income - expense
+
+    # Biggest single expense ever
+    biggest = db.session.query(
+        Transaction.description,
+        Transaction.amount,
+    ).join(Category, Transaction.category_id == Category.category_id) \
+     .filter(Category.category_type == 'expense') \
+     .order_by(Transaction.amount.desc()) \
+     .first()
+
+    # Counts
+    account_count = db.session.query(func.count(Account.account_id)).scalar()
+    txn_count = db.session.query(func.count(Transaction.transaction_id)).scalar()
+
+    # Total balance
+    total_balance = Decimal(db.session.query(
+        func.coalesce(func.sum(Account.balance), 0)
+    ).scalar() or 0)
+
+    # --- Build the candidate list ---
+    # Each entry is a tuple: (applicable_bool, message_string)
+    # Only "applicable" messages get into the random pool.
+    candidates = []
+
+    # Context-aware: top spending category
+    if top_cat and top_cat.total >= 100:
+        candidates.append(
+            f"Your top spending category is {top_cat.name} at ${top_cat.total:.2f}. "
+            f"Have you tried not doing that?"
+        )
+        candidates.append(
+            f"{top_cat.name}: ${top_cat.total:.2f} this month. "
+            f"Your wallet has filed a missing persons report."
+        )
+        candidates.append(
+            f"You spent ${top_cat.total:.2f} on {top_cat.name} this month. "
+            f"Bold strategy. Let's see if it pays off."
+        )
+
+    # Context-aware: negative monthly net
+    if net < 0:
+        candidates.append(
+            f"You're ${abs(net):.2f} in the red this month. "
+            f"The good news is you can't go any redder. Well, you can. Don't."
+        )
+        candidates.append(
+            f"Net this month: -${abs(net):.2f}. Tough month, champ. "
+            f"On the bright side, financial rock bottom has a great view of the climb up."
+        )
+
+    # Context-aware: positive monthly net
+    if net > 0:
+        candidates.append(
+            f"You're ${net:.2f} ahead this month. "
+            f"Statistically that puts you above most adults. Take the win."
+        )
+        candidates.append(
+            f"+${net:.2f} this month. "
+            f"Look at you, doing finance. Your parents would be cautiously optimistic."
+        )
+
+    # Context-aware: biggest expense
+    if biggest and biggest.amount >= 200:
+        candidates.append(
+            f"\"{biggest.description}\" for ${biggest.amount:.2f}? "
+            f"I'm not your accountant, I'm just a Flask app, but... yeah, no, I have notes."
+        )
+
+    # Context-aware: total balance
+    if total_balance > 10000:
+        candidates.append(
+            f"${total_balance:.2f} total balance. "
+            f"Look at Mr. Rockefeller over here. Save some economy for the rest of us."
+        )
+    elif 0 < total_balance < 100:
+        candidates.append(
+            f"${total_balance:.2f} total balance. "
+            f"This is what we in the industry call 'a vibe.' Specifically: dread."
+        )
+
+    # Context-aware: lots of accounts
+    if account_count >= 4:
+        candidates.append(
+            f"{account_count} accounts? Are you running a small bank or just very confused?"
+        )
+
+    # Context-aware: lots of transactions
+    if txn_count >= 50:
+        candidates.append(
+            f"{txn_count} transactions recorded. "
+            f"You're either very disciplined or you've descended into a tracking spiral. "
+            f"Probably both."
+        )
+
+    # --- Fallback generics (always applicable) ---
+    # These fire when no contextual templates fit, OR get mixed into the pool.
+    generics = [
+        "Why did the dollar break up with the cent? It just didn't make sense.",
+        "Reminder: money can't buy happiness, but it CAN buy snacks. Snacks are pretty close.",
+        "A budget is just a spreadsheet's way of telling you no.",
+        "Financial tip: if you can't afford it twice, you can't afford it once. Unless it's pizza. Then ignore me.",
+        "Compound interest is the eighth wonder of the world. Compound debt is the eighth circle of hell. Pick one.",
+        "I am an HTML page pretending to give financial advice. Consider the source.",
+        "Your future self called. They want to know what you were thinking.",
+    ]
+
+    # If we have at least 2 contextual candidates, use ONLY those (more fun).
+    # Otherwise mix in generics so we always have something to say.
+    if len(candidates) >= 2:
+        pool = candidates
+    else:
+        pool = candidates + generics
+
+    return random.choice(pool)
+
 @app.route('/')
 def hello():
     today = date.today()
@@ -234,6 +384,9 @@ def hello():
     # --- Account-level: each account's balance ---
     accounts = Account.query.order_by(Account.name).all()
 
+    # My ULTRA fun feature
+    quip = get_financial_quip()
+
     return render_template(
         'index.html',
         total_balance=total_balance,
@@ -247,6 +400,7 @@ def hello():
         avg_transaction=avg_transaction,
         recent=recent,
         accounts=accounts,
+        quip=quip,
     )
 
 @app.route('/accounts/new', methods=['GET', 'POST'])
@@ -469,16 +623,32 @@ if __name__ == '__main__':
     with app.app_context():
         db.create_all()
 
-        # Seed the default user if it doesn't exist
+        # Seed default user
         if User.query.count() == 0:
             default_user = User(
-                username='zander',
-                email='zander@example.com',
-                first_name='Zander',
-                last_name='Erwin',
+                username='cody',
+                email='cody@example.com',
+                first_name='Cody',
+                last_name='Farlow',
             )
             db.session.add(default_user)
             db.session.commit()
             print(f'Seeded default user: {default_user.username}')
+
+        # Seed default categories if none exist
+        if Category.query.count() == 0:
+            default_categories = [
+                Category(name='Salary', category_type='income', description='Wages and paychecks'),
+                Category(name='Freelance', category_type='income', description='Side work and 1099 income'),
+                Category(name='Groceries', category_type='expense', description='Food and household basics'),
+                Category(name='Rent', category_type='expense', description='Monthly rent or mortgage'),
+                Category(name='Utilities', category_type='expense', description='Electric, water, internet'),
+                Category(name='Gas', category_type='expense', description='Vehicle fuel'),
+                Category(name='Dining Out', category_type='expense', description='Restaurants and takeout'),
+                Category(name='Entertainment', category_type='expense', description='Movies, games, streaming'),
+            ]
+            db.session.add_all(default_categories)
+            db.session.commit()
+            print(f'Seeded {len(default_categories)} default categories')
 
     app.run(debug=True)

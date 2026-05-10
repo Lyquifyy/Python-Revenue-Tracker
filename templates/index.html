@@ -29,6 +29,27 @@
         .flash { padding: 0.75rem; margin: 1rem 0; border-radius: 4px; }
         .flash-success { background: #d4edda; color: #155724; }
         .flash-error { background: #f8d7da; color: #721c24; }
+        .quip {
+            margin: 1.5rem 0;
+            padding: 1rem 1.25rem;
+            background: linear-gradient(90deg, #fff8e1 0%, #fff3c4 100%);
+            border-left: 4px solid #f0a020;
+            border-radius: 4px;
+            font-size: 0.95rem;
+        }
+        .quip-label {
+            display: block;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #8a6a00;
+            margin-bottom: 0.25rem;
+            font-weight: 600;
+        }
+        .quip-text {
+            color: #4a3500;
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
@@ -39,6 +60,11 @@
         <a href="{{ url_for('list_transactions') }}">Transactions</a>
         <a href="{{ url_for('new_account') }}">+ New Account</a>
         <a href="{{ url_for('new_transaction') }}">+ New Transaction</a>
+    </div>
+
+    <div class="quip">
+        <span class="quip-label">Your Financial Advisor says:</span>
+        <span class="quip-text">{{ quip }}</span>
     </div>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
