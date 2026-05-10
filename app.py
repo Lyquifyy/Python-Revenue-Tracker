@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from flask import Flask, render_template, redirect, url_for, flash
 from flask_sqlalchemy import SQLAlchemy
@@ -6,6 +6,7 @@ from flask_wtf import FlaskForm
 from wtforms import StringField, DecimalField, SelectField, DateField
 from wtforms.validators import DataRequired, NumberRange, Length
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func, case
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'totally-secret-key'
@@ -163,18 +164,81 @@ class TransactionForm(FlaskForm):
 
 @app.route('/')
 def hello():
-    accounts = Account.query.all()
-    categories = Category.query.all()
-    transactions = Transaction.query.order_by(Transaction.transaction_date.desc()).all()
-    budgets = Budget.query.all()
+    today = date.today()
+    month_start = today.replace(day=1)
+    thirty_days_ago = today - timedelta(days=30)
+
+    # --- Aggregate 1: Total balance across all accounts (SUM) ---
+    total_balance = db.session.query(
+        func.coalesce(func.sum(Account.balance), 0)
+    ).scalar()
+
+    # --- Aggregate 2: Counts (COUNT) ---
+    account_count = db.session.query(func.count(Account.account_id)).scalar()
+    transaction_count = db.session.query(func.count(Transaction.transaction_id)).scalar()
+    category_count = db.session.query(func.count(Category.category_id)).scalar()
+
+    # --- Aggregate 3: Monthly income vs expense (SUM with CASE) ---
+    # Single query that splits the total by category_type using SQL CASE
+    monthly = db.session.query(
+        func.coalesce(
+            func.sum(case((Category.category_type == 'income', Transaction.amount), else_=0)),
+            0
+        ).label('income'),
+        func.coalesce(
+            func.sum(case((Category.category_type == 'expense', Transaction.amount), else_=0)),
+            0
+        ).label('expense'),
+    ).join(Category, Transaction.category_id == Category.category_id) \
+     .filter(Transaction.transaction_date >= month_start) \
+     .first()
+
+    monthly_income = monthly.income or 0
+    monthly_expense = monthly.expense or 0
+    net_monthly = monthly_income - monthly_expense
+
+    # --- Aggregate 4: Top spending categories this month (SUM + GROUP BY) ---
+    top_categories = db.session.query(
+        Category.name,
+        func.sum(Transaction.amount).label('total'),
+        func.count(Transaction.transaction_id).label('count'),
+    ).join(Transaction, Transaction.category_id == Category.category_id) \
+     .filter(Category.category_type == 'expense') \
+     .filter(Transaction.transaction_date >= month_start) \
+     .group_by(Category.category_id, Category.name) \
+     .order_by(func.sum(Transaction.amount).desc()) \
+     .limit(5) \
+     .all()
+
+    # --- Aggregate 5: Average transaction amount over last 30 days (AVG) ---
+    avg_transaction = db.session.query(
+        func.coalesce(func.avg(Transaction.amount), 0)
+    ).filter(Transaction.transaction_date >= thirty_days_ago).scalar()
+
+    # --- Recent transactions for the activity feed ---
+    recent = Transaction.query.order_by(
+        Transaction.transaction_date.desc(),
+        Transaction.transaction_id.desc(),
+    ).limit(5).all()
+
+    # --- Account-level: each account's balance ---
+    accounts = Account.query.order_by(Account.name).all()
 
     return render_template(
         'index.html',
+        total_balance=total_balance,
+        account_count=account_count,
+        transaction_count=transaction_count,
+        category_count=category_count,
+        monthly_income=monthly_income,
+        monthly_expense=monthly_expense,
+        net_monthly=net_monthly,
+        top_categories=top_categories,
+        avg_transaction=avg_transaction,
+        recent=recent,
         accounts=accounts,
-        categories=categories,
-        transactions=transactions,
-        budgets=budgets,
     )
+
 @app.route('/accounts/new', methods=['GET', 'POST'])
 def new_account():
     form = AccountForm()

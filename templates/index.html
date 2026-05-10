@@ -2,42 +2,135 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Finance Tracker</title>
+    <title>Dashboard - Finance Tracker</title>
     <style>
-        body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
-        table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
-        th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #ddd; }
-        th { background: #f5f5f5; }
-        .expense { color: #c00; }
+        body { font-family: system-ui, sans-serif; max-width: 1000px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+        h1, h2 { margin-bottom: 0.5rem; }
+        .nav { margin-bottom: 1.5rem; }
+        .nav a { color: #06c; text-decoration: none; margin-right: 1rem; }
+        .nav a:hover { text-decoration: underline; }
+
+        .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin: 1.5rem 0; }
+        .card { padding: 1rem; border: 1px solid #ddd; border-radius: 6px; background: #fafafa; }
+        .card .label { font-size: 0.85rem; text-transform: uppercase; color: #666; letter-spacing: 0.05em; }
+        .card .value { font-size: 1.6rem; font-weight: 600; margin-top: 0.25rem; }
         .income { color: #060; }
+        .expense { color: #c00; }
+        .neutral { color: #222; }
+
+        table { border-collapse: collapse; width: 100%; margin-top: 0.5rem; }
+        th, td { text-align: left; padding: 0.5rem; border-bottom: 1px solid #eee; }
+        th { background: #f5f5f5; font-size: 0.85rem; text-transform: uppercase; color: #555; }
+        .num { text-align: right; }
+
+        .row { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 1.5rem; }
+        @media (max-width: 700px) { .row { grid-template-columns: 1fr; } }
+
+        .flash { padding: 0.75rem; margin: 1rem 0; border-radius: 4px; }
+        .flash-success { background: #d4edda; color: #155724; }
+        .flash-error { background: #f8d7da; color: #721c24; }
     </style>
 </head>
 <body>
     <h1>Finance Tracker</h1>
-        {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-            {% for category, message in messages %}
-                <div style="padding: 0.75rem; margin: 1rem 0; border-radius: 4px;
-                            background: {% if category == 'success' %}#d4edda{% else %}#f8d7da{% endif %};
-                            color: {% if category == 'success' %}#155724{% else %}#721c24{% endif %};">
-                    {{ message }}
-                </div>
-            {% endfor %}
-        {% endif %}
-    {% endwith %}
-    <p>
-        <a href="{{ url_for('new_account') }}">+ New Account</a>
-        &nbsp;|&nbsp;
-        <a href="{{ url_for('new_transaction') }}">+ New Transaction</a>
-    </p>    <p>
-        <strong>{{ accounts|length }}</strong> account(s),
-        <strong>{{ categories|length }}</strong> categor(ies),
-        <strong>{{ transactions|length }}</strong> transaction(s),
-        <strong>{{ budgets|length }}</strong> budget(s)
-    </p>
 
-    <h2>Transactions</h2>
-    {% if transactions %}
+    <div class="nav">
+        <a href="{{ url_for('new_account') }}">+ New Account</a>
+        <a href="{{ url_for('new_transaction') }}">+ New Transaction</a>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+    {% endwith %}
+
+    <!-- SUMMARY CARDS -->
+    <div class="cards">
+        <div class="card">
+            <div class="label">Total Balance</div>
+            <div class="value neutral">${{ "%.2f"|format(total_balance) }}</div>
+            <div style="font-size: 0.85rem; color: #666;">across {{ account_count }} account(s)</div>
+        </div>
+        <div class="card">
+            <div class="label">Income (this month)</div>
+            <div class="value income">${{ "%.2f"|format(monthly_income) }}</div>
+        </div>
+        <div class="card">
+            <div class="label">Expenses (this month)</div>
+            <div class="value expense">${{ "%.2f"|format(monthly_expense) }}</div>
+        </div>
+        <div class="card">
+            <div class="label">Net (this month)</div>
+            <div class="value {% if net_monthly >= 0 %}income{% else %}expense{% endif %}">
+                ${{ "%.2f"|format(net_monthly) }}
+            </div>
+        </div>
+        <div class="card">
+            <div class="label">Avg Transaction (30d)</div>
+            <div class="value neutral">${{ "%.2f"|format(avg_transaction) }}</div>
+        </div>
+        <div class="card">
+            <div class="label">Transactions</div>
+            <div class="value neutral">{{ transaction_count }}</div>
+        </div>
+    </div>
+
+    <!-- TWO-COLUMN ROW -->
+    <div class="row">
+
+        <!-- TOP SPENDING CATEGORIES -->
+        <div>
+            <h2>Top Spending Categories</h2>
+            <p style="color: #666; font-size: 0.9rem; margin-top: 0;">This month, ranked by total spent.</p>
+            {% if top_categories %}
+                <table>
+                    <thead>
+                        <tr><th>Category</th><th class="num">Total</th><th class="num">Count</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for c in top_categories %}
+                            <tr>
+                                <td>{{ c.name }}</td>
+                                <td class="num">${{ "%.2f"|format(c.total) }}</td>
+                                <td class="num">{{ c.count }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <p style="color: #666;">No expenses this month yet.</p>
+            {% endif %}
+        </div>
+
+        <!-- ACCOUNT BALANCES -->
+        <div>
+            <h2>Accounts</h2>
+            <p style="color: #666; font-size: 0.9rem; margin-top: 0;">Current balances per account.</p>
+            {% if accounts %}
+                <table>
+                    <thead>
+                        <tr><th>Account</th><th>Type</th><th class="num">Balance</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for a in accounts %}
+                            <tr>
+                                <td>{{ a.name }}</td>
+                                <td>{{ a.account_type }}</td>
+                                <td class="num">${{ "%.2f"|format(a.balance) }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <p style="color: #666;">No accounts yet. <a href="{{ url_for('new_account') }}">Create one</a>.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- RECENT ACTIVITY -->
+    <h2 style="margin-top: 2rem;">Recent Activity</h2>
+    {% if recent %}
         <table>
             <thead>
                 <tr>
@@ -45,25 +138,25 @@
                     <th>Description</th>
                     <th>Category</th>
                     <th>Account</th>
-                    <th>Amount</th>
+                    <th class="num">Amount</th>
                 </tr>
             </thead>
             <tbody>
-                {% for t in transactions %}
+                {% for t in recent %}
                     <tr>
                         <td>{{ t.transaction_date }}</td>
                         <td>{{ t.description }}</td>
                         <td>{{ t.category.name }}</td>
                         <td>{{ t.account.name }}</td>
-                        <td class="{{ t.category.category_type }}">
-                            ${{ "%.2f"|format(t.amount) }}
+                        <td class="num {{ t.category.category_type }}">
+                            {% if t.category.category_type == 'expense' %}&minus;{% else %}+{% endif %}${{ "%.2f"|format(t.amount) }}
                         </td>
                     </tr>
                 {% endfor %}
             </tbody>
         </table>
     {% else %}
-        <p>No transactions yet.</p>
+        <p style="color: #666;">No transactions yet. <a href="{{ url_for('new_transaction') }}">Record one</a>.</p>
     {% endif %}
 </body>
 </html>
