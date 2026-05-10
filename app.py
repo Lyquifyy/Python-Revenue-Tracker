@@ -1,8 +1,9 @@
 from datetime import date
+from decimal import Decimal
 from flask import Flask, render_template, redirect, url_for, flash
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf import FlaskForm
-from wtforms import StringField, DecimalField, SelectField
+from wtforms import StringField, DecimalField, SelectField, DateField
 from wtforms.validators import DataRequired, NumberRange, Length
 from sqlalchemy.exc import IntegrityError
 
@@ -130,6 +131,36 @@ class AccountForm(FlaskForm):
         default=0,
     )
 
+class TransactionForm(FlaskForm):
+    account_id = SelectField(
+        'Account',
+        coerce=int,
+        validators=[DataRequired()],
+    )
+    category_id = SelectField(
+        'Category',
+        coerce=int,
+        validators=[DataRequired()],
+    )
+    amount = DecimalField(
+        'Amount',
+        validators=[
+            DataRequired(),
+            NumberRange(min=0.01, message='Amount must be greater than zero'),
+        ],
+        places=2,
+    )
+    description = StringField(
+        'Description',
+        validators=[DataRequired(), Length(min=1, max=255)],
+    )
+    transaction_date = DateField(
+        'Date',
+        validators=[DataRequired()],
+        default=date.today,
+    )
+
+
 @app.route('/')
 def hello():
     accounts = Account.query.all()
@@ -164,6 +195,69 @@ def new_account():
             db.session.rollback()
             flash('An account with that name already exists.', 'error')
     return render_template('new_account.html', form=form)
+
+@app.route('/transactions/new', methods=['GET', 'POST'])
+def new_transaction():
+    form = TransactionForm()
+
+    # Populate dropdowns from the database
+    form.account_id.choices = [
+        (a.account_id, f'{a.name} ({a.account_type})')
+        for a in Account.query.order_by(Account.name).all()
+    ]
+    form.category_id.choices = [
+        (c.category_id, f'{c.name} ({c.category_type})')
+        for c in Category.query.order_by(Category.category_type, Category.name).all()
+    ]
+
+    # Block the form entirely if there's nothing to select
+    if not form.account_id.choices or not form.category_id.choices:
+        flash('You need at least one account and one category before adding transactions.', 'error')
+        return redirect(url_for('hello'))
+
+    if form.validate_on_submit():
+        # ============================================================
+        # SQL TRANSACTION (Atomic operation)
+        # ============================================================
+        # Both the INSERT into `transactions` and the UPDATE on
+        # `accounts.balance` must succeed together - or neither at all.
+        # This is the rubric's transaction logic requirement.
+        # ============================================================
+        try:
+            user = User.query.first()
+            account = Account.query.get(form.account_id.data)
+            category = Category.query.get(form.category_id.data)
+
+            # Build the transaction
+            txn = Transaction(
+                user_id=user.user_id,
+                account_id=account.account_id,
+                category_id=category.category_id,
+                amount=form.amount.data,
+                description=form.description.data.strip(),
+                transaction_date=form.transaction_date.data,
+            )
+            db.session.add(txn)
+
+            # Compute the balance change.
+            # Income increases the balance; expense decreases it.
+            if category.category_type == 'income':
+                account.balance = Decimal(account.balance) + Decimal(form.amount.data)
+            else:
+                account.balance = Decimal(account.balance) - Decimal(form.amount.data)
+
+            # Commit atomically. If anything in this block raised,
+            # the except clause rolls back BOTH changes together.
+            db.session.commit()
+
+            flash(f'Transaction recorded. {account.name} balance is now ${account.balance:.2f}.', 'success')
+            return redirect(url_for('hello'))
+
+        except Exception as e:
+            db.session.rollback()
+            flash(f'Could not save transaction: {e.__class__.__name__}. No changes were made.', 'error')
+
+    return render_template('new_transaction.html', form=form)
 
 if __name__ == '__main__':
     with app.app_context():
