@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, render_template
 from flask_sqlalchemy import SQLAlchemy
 from datetime import date
 
@@ -58,8 +58,15 @@ class Transaction(db.Model):
 @app.route('/')
 def hello():
     accounts = Account.query.all()
-    return f'<h1>Finance Tracker</h1><p>Accounts in DB: {len(accounts)}</p>'
+    categories = Category.query.all()
+    transactions = Transaction.query.order_by(Transaction.transaction_date.desc()).all()
 
+    return render_template(
+        'index.html',
+        accounts=accounts,
+        categories=categories,
+        transactions=transactions,
+    )
 
 if __name__ == '__main__':
     with app.app_context():
